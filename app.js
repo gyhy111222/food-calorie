@@ -243,15 +243,40 @@ async function analyzeFood() {
   setLoading(true, '分析中...');
   try {
     const res = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (res.status === 413) {
-      showError('上传内容过大，请减少图片数量，或在 iPhone 上改传更清晰但更小的图片');
-      return;
-    }
-    const result = await res.json();
+    const result = await parseApiResponse(res, {
+      413: '上传内容过大，请减少图片数量，或在 iPhone 上改传更清晰但更小的图片'
+    });
     if (result.success) { state.lastResult = result.data; displayResult(result.data); }
     else showError(result.error || '分析失败');
-  } catch { showError('网络错误，请检查连接后重试'); }
+  } catch (err) {
+    console.error('[analyzeFood]', err);
+    showError(err.message || '网络错误，请检查连接后重试');
+  }
   finally { setLoading(false); }
+}
+
+async function parseApiResponse(res, statusMessages = {}) {
+  const text = await res.text();
+  let data = null;
+
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+
+  if (res.ok) {
+    if (data) return data;
+    throw new Error('服务器返回了非 JSON 响应，请检查运行日志');
+  }
+
+  const message = statusMessages[res.status]
+    || data?.error
+    || data?.message
+    || (text && text.length < 300 ? text : '')
+    || `请求失败（${res.status}）`;
+
+  throw new Error(message);
 }
 
 function setLoading(on, text = '分析中...') {
@@ -441,11 +466,9 @@ async function submitFollowup() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    if (res.status === 413) {
-      showError('追问请求内容过大，请减少图片/视频后重新分析');
-      return;
-    }
-    const result = await res.json();
+    const result = await parseApiResponse(res, {
+      413: '追问请求内容过大，请减少图片/视频后重新分析'
+    });
     if (result.success) {
       state.lastResult = result.data;
       displayResult(result.data);
@@ -455,8 +478,9 @@ async function submitFollowup() {
     } else {
       showError(result.error || '追问失败');
     }
-  } catch {
-    showError('网络错误，请检查连接后重试');
+  } catch (err) {
+    console.error('[submitFollowup]', err);
+    showError(err.message || '网络错误，请检查连接后重试');
   } finally {
     setFollowupLoading(false);
   }

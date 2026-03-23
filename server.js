@@ -10,13 +10,14 @@ const { PUBLIC_PREFIX, getUploadRoot, startCleanupScheduler } = require('./api/d
 const app = express();
 const PORT = process.env.PORT || 10000;
 const BODY_LIMIT = process.env.BODY_LIMIT || '25mb';
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 310000);
 
 app.use(cors());
 app.use(express.json({ limit: BODY_LIMIT }));
 
 app.use((req, res, next) => {
-  req.setTimeout(70_000);
-  res.setTimeout(70_000);
+  req.setTimeout(REQUEST_TIMEOUT_MS);
+  res.setTimeout(REQUEST_TIMEOUT_MS);
   next();
 });
 
@@ -102,6 +103,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`  Local:   http://localhost:${PORT}`);
   console.log(`  Network: http://0.0.0.0:${PORT}`);
   console.log(`  Health:  http://localhost:${PORT}/health\n`);
+  console.log(`  Timeout: ${REQUEST_TIMEOUT_MS}ms\n`);
 });
 
 module.exports = app;
