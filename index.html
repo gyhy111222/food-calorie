@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>食物热量分析器</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>🍽️ 食物热量分析器</h1>
+      <p class="subtitle">上传食物图片或视频，AI智能分析热量与营养</p>
+    </header>
+
+    <div class="status-bar" id="statusBar">
+      <span class="status-icon" id="statusIcon">⏳</span>
+      <span class="status-text" id="statusText">正在检查配置...</span>
+    </div>
+
+    <section class="config-panel">
+      <div class="config-header" onclick="toggleConfig()">
+        <h2>⚙️ 自定义模型配置（可选）</h2>
+        <span class="toggle-icon" id="toggleIcon">▼</span>
+      </div>
+      <div class="config-content collapsed" id="configContent">
+        <p class="config-hint">留空则使用服务器默认配置。如需临时切换 API，请填写以下三项。</p>
+        <div class="form-group">
+          <label for="customBaseURL">Base URL</label>
+          <input type="text" id="customBaseURL" placeholder="https://api.openai.com/v1" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="customApiKey">API Key <span class="form-hint-inline">请输入老师发放的API KEY</span></label>
+          <input type="password" id="customApiKey" placeholder="sk-xxx" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="customModelName">模型名称</label>
+          <input type="text" id="customModelName" placeholder="gpt-4o" class="form-control">
+        </div>
+      </div>
+    </section>
+
+    <section class="upload-section">
+      <h2>📷 上传食物图片/视频</h2>
+      <div class="upload-box" id="uploadBox">
+        <div class="upload-content">
+          <div class="upload-icon">📁</div>
+          <p class="upload-text">拖放文件到这里，或点击上传</p>
+          <p class="upload-hint">图片：JPG/PNG/WebP，最多3张 | 视频：MP4/WebM/MOV，不超过15秒</p>
+          <input type="file" id="fileInput" accept="image/*,video/*" multiple hidden>
+          <button type="button" class="btn btn-secondary" onclick="document.getElementById('fileInput').click()">选择文件</button>
+        </div>
+        <div class="file-count" id="fileCount">0 个文件</div>
+      </div>
+      <div class="preview-grid" id="previewGrid"></div>
+    </section>
+
+    <section class="weight-section">
+      <h2>⚖️ 食物重量（可选）</h2>
+      <p class="weight-desc">输入重量可按实际计算热量；不输入则由 AI 估算各食材份量</p>
+      <div class="weight-input-wrapper">
+        <input type="number" id="weightInput" min="1" max="10000" placeholder="如 350" class="form-control weight-input">
+        <span class="weight-unit">克 (g)</span>
+      </div>
+    </section>
+
+    <section class="action-section">
+      <button type="button" class="btn btn-primary btn-analyze" id="analyzeBtn" onclick="analyzeFood()">
+        <span class="btn-text">🔍 开始分析</span>
+        <span class="btn-loading" style="display: none;"><span class="spinner"></span>分析中...</span>
+      </button>
+    </section>
+
+    <!-- ===== 结果 ===== -->
+    <section class="result-section" id="resultSection" style="display: none;">
+      <h2>📊 分析结果</h2>
+
+      <!-- 总热量 -->
+      <div class="result-card main-result">
+        <div class="total-summary">
+          <div class="total-cal-box">
+            <div class="total-label">总热量</div>
+            <div class="total-value" id="totalCalories">-</div>
+            <div class="total-unit">大卡</div>
+          </div>
+          <div class="total-weight-box">
+            <div class="total-label">总重量</div>
+            <div class="total-value total-value-sm" id="totalWeight">-</div>
+            <div class="total-unit">克</div>
+          </div>
+          <div class="total-items-box">
+            <div class="total-label">食材数</div>
+            <div class="total-value total-value-sm" id="totalItems">-</div>
+            <div class="total-unit">项</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 份量校准 -->
+      <div class="result-card calibrate-card" id="calibrateCard" style="display: none;">
+        <div class="calibrate-header">
+          <h3>📏 份量校准</h3>
+          <span class="calibrate-badge" id="calibrateBadge">AI 估算</span>
+        </div>
+        <p class="calibrate-desc" id="calibrateDesc"></p>
+        <div class="calibrate-input-wrapper">
+          <input type="number" id="calibrateWeight" min="1" max="10000" class="form-control calibrate-input" placeholder="输入实际总重量">
+          <span class="weight-unit">克 (g)</span>
+          <button class="btn btn-primary btn-calibrate" onclick="recalibrate()">按比例校准</button>
+        </div>
+      </div>
+
+      <!-- 食材明细表 -->
+      <div class="result-card">
+        <h3>🥘 食材明细</h3>
+        <div class="table-wrapper">
+          <table class="food-table" id="foodTable">
+            <thead>
+              <tr>
+                <th>食材</th>
+                <th>重量</th>
+                <th>热量/100g</th>
+                <th>总热量</th>
+                <th>烹饪方式</th>
+                <th>可能是</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody id="foodTableBody"></tbody>
+            <tfoot id="foodTableFoot"></tfoot>
+          </table>
+        </div>
+      </div>
+
+      <!-- 搭配建议 -->
+      <div class="result-card suggestion-card">
+        <h3>💡 膳食搭配建议</h3>
+        <p class="suggestion-text" id="servingSuggestion">-</p>
+      </div>
+
+      <!-- 健康提示 -->
+      <div class="result-card warning-card" id="warningCard" style="display: none;">
+        <h3>⚠️ 健康提示</h3>
+        <p class="warning-text" id="warnings">-</p>
+      </div>
+
+      <!-- 追问/修正 -->
+      <div class="result-card followup-card" id="followupCard">
+        <h3>💬 对结果有疑问？</h3>
+        <p class="followup-desc">点击表格中的候选食材可快速替换，或自由输入修改意见。AI 会结合原图重新分析，修改一项可能连带调整其他食材比例</p>
+        <div class="followup-examples" id="followupExamples">
+          <button class="followup-tag" onclick="fillFollowup(this.textContent)">把红烧牛肉改成杏鲍菇炒牛肉</button>
+          <button class="followup-tag" onclick="fillFollowup(this.textContent)">米饭的份量看起来更多</button>
+          <button class="followup-tag" onclick="fillFollowup(this.textContent)">这份牛肉的热量是否合理？</button>
+        </div>
+        <div class="followup-input-wrapper">
+          <textarea id="followupInput" class="form-control followup-textarea" placeholder="例如：把红烧牛肉改成杏鲍菇炒牛肉，重新看下比例" rows="2"></textarea>
+          <button class="btn btn-primary btn-followup" id="followupBtn" onclick="submitFollowup()">
+            <span class="btn-text">🔄 重新分析</span>
+            <span class="btn-loading" style="display: none;"><span class="spinner"></span>重新分析...</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <div class="error-toast" id="errorToast">
+      <span class="error-message" id="errorMessage"></span>
+      <button class="error-close" onclick="hideError()">×</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "food-calorie-analyzer",
+  "version": "1.0.0",
+  "description": "食物热量分析器 - 上传图片AI识别食材并计算热量",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "openai": "^4.77.0"
+  }
+}
