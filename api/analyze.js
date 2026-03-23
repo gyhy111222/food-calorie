@@ -115,7 +115,7 @@ module.exports = async function handler(req, res) {
       ? AI_PROMPT_WITH_WEIGHT.replace('{weight}', weight)
       : AI_PROMPT_NO_WEIGHT;
 
-    const userContent = buildUserContent(images, videos);
+    const userContent = await buildUserContent(images, videos);
 
     const client = await createOpenAIClient(aiConfig);
 

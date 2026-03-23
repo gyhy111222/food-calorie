@@ -75,7 +75,7 @@ module.exports = async function handler(req, res) {
       .replace('{previousResult}', JSON.stringify(previousResult, null, 2))
       .replace('{userFollowup}', followupText);
 
-    const userContent = buildUserContent(images, videos);
+    const userContent = await buildUserContent(images, videos);
     userContent.unshift({
       type: 'text',
       text: '以下是该餐食的原图（用于重新分析参考）：'

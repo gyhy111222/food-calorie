@@ -3,6 +3,9 @@
  */
 
 const OpenAI = require('openai');
+const fs = require('fs/promises');
+const path = require('path');
+const { getUploadRoot, PUBLIC_PREFIX } = require('./disk');
 
 // 默认模型配置（可配置环境变量覆盖）
 const DEFAULT_MODEL_CONFIG = {
@@ -16,27 +19,77 @@ async function createOpenAIClient(config) {
   return new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
 }
 
-function toRemoteUrl(value) {
+function getMediaValue(value) {
   if (!value) return '';
   if (typeof value === 'string') return value;
-  return value.url || value.publicUrl || '';
+  return value.url || value.publicUrl || value.base64 || '';
 }
 
 /**
- * 构建 AI 消息内容（支持对象存储 URL）
+ * 将挂载盘 URL 转为 Moonshot 需要的 base64 data URL
  */
-function buildUserContent(images, videos) {
+async function toModelMediaUrl(value, fallbackMime) {
+  const raw = getMediaValue(value);
+  if (!raw) return '';
+
+  if (raw.startsWith('data:') || raw.startsWith('ms://')) {
+    return raw;
+  }
+
+  const url = new URL(raw, 'http://localhost');
+  if (!url.pathname.startsWith(PUBLIC_PREFIX + '/')) {
+    throw new Error('仅支持已上传到挂载盘的文件');
+  }
+
+  const relativePath = decodeURIComponent(url.pathname.slice(PUBLIC_PREFIX.length + 1));
+  const fullPath = path.join(getUploadRoot(), relativePath);
+  const normalizedRoot = path.resolve(getUploadRoot());
+  const normalizedFile = path.resolve(fullPath);
+
+  if (!normalizedFile.startsWith(normalizedRoot)) {
+    throw new Error('文件路径非法');
+  }
+
+  const fileBuffer = await fs.readFile(normalizedFile);
+  const mimeType = inferMimeType(normalizedFile, fallbackMime);
+  return `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+}
+
+function inferMimeType(filePath, fallbackMime) {
+  if (fallbackMime) return fallbackMime;
+
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeMap = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.bmp': 'image/bmp',
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.webm': 'video/webm',
+    '.m4v': 'video/mp4'
+  };
+
+  return mimeMap[ext] || 'application/octet-stream';
+}
+
+/**
+ * 构建 AI 消息内容（Moonshot 只接受 base64 / ms://）
+ */
+async function buildUserContent(images, videos) {
   const content = [];
   if (images && images.length > 0) {
     for (const image of images) {
-      const url = toRemoteUrl(image);
-      if (url) content.push({ type: 'image_url', image_url: { url } });
+      const mediaUrl = await toModelMediaUrl(image, 'image/jpeg');
+      if (mediaUrl) content.push({ type: 'image_url', image_url: { url: mediaUrl } });
     }
   }
   if (videos && videos.length > 0) {
     for (const video of videos) {
-      const url = toRemoteUrl(video);
-      if (url) content.push({ type: 'image_url', image_url: { url } });
+      const mediaUrl = await toModelMediaUrl(video, 'video/mp4');
+      if (mediaUrl) content.push({ type: 'video_url', video_url: { url: mediaUrl } });
     }
   }
   return content;
