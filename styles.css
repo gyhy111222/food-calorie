@@ -359,13 +359,14 @@ body {
   .result-section h2 { font-size: var(--fs-lg); }
   .total-summary { gap: 16px; }
 
-  .food-table th, .food-table td { padding: 8px 8px; }
+  .food-table th, .food-table td { padding: 8px 6px; }
   .food-table { font-size: var(--fs-xs); }
-  .td-note { max-width: 90px; font-size: 11px; }
+  .td-note { min-width: 136px; max-width: 136px; font-size: 11px; line-height: 1.45; }
   .cooking-tag { font-size: 11px; padding: 2px 6px; }
-  .td-alts { min-width: 80px; }
+  .td-alts { min-width: 72px; }
   .alt-tag { font-size: 11px; padding: 2px 6px; }
   .conf-tag { font-size: 10px; }
+  .td-name { white-space: normal; min-width: 82px; }
 
   .calibrate-input-wrapper { flex-wrap: wrap; }
   .calibrate-input { min-width: 0; }
