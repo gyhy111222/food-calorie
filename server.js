@@ -28,14 +28,14 @@ app.get('/', (req, res) => {
 
 // config 接口
 const configModule = require('./api/config');
-app.get('/api/config', (req, res) => configModule.handler(req, res));
+app.get('/api/config', (req, res) => configModule(req, res));
 app.options('/api/config', (req, res) => { res.status(200).end(); });
 
 // analyze 接口
 const analyzeModule = require('./api/analyze');
 app.post('/api/analyze', async (req, res) => {
   try {
-    await analyzeModule.handler(req, res);
+    await analyzeModule(req, res);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -46,7 +46,7 @@ app.options('/api/analyze', (req, res) => { res.status(200).end(); });
 const followupModule = require('./api/followup');
 app.post('/api/followup', async (req, res) => {
   try {
-    await followupModule.handler(req, res);
+    await followupModule(req, res);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
