@@ -3,8 +3,14 @@
  */
 
 const state = {
-  images: [], videos: [], hasDefaultConfig: false, lastResult: null
+  images: [], videos: [], hasDefaultConfig: false, uploadEnabled: false, lastResult: null
 };
+
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+const MAX_VIDEO_SIZE = 50 * 1024 * 1024;
+const MAX_TOTAL_UPLOAD_BYTES = 18 * 1024 * 1024;
+const IMAGE_MAX_DIMENSION = 1600;
+const IMAGE_OUTPUT_QUALITY = 0.82;
 
 const el = id => document.getElementById(id);
 
@@ -16,6 +22,13 @@ async function loadServerConfig() {
   try {
     const cfg = await (await fetch('/api/config')).json();
     state.hasDefaultConfig = cfg.hasDefaultModel;
+    state.uploadEnabled = !!cfg.uploadEnabled;
+    if (!state.uploadEnabled) {
+      el('statusIcon').textContent = '❌'; el('statusText').textContent = '服务器未配置挂载上传目录，暂时无法上传文件';
+      el('statusBar').className = 'status-bar status-error';
+      el('analyzeBtn').disabled = true;
+      return;
+    }
     if (cfg.hasDefaultModel) {
       el('statusIcon').textContent = '✅'; el('statusText').textContent = '模型已就绪';
       el('statusBar').className = 'status-bar status-ok';
@@ -47,36 +60,172 @@ function initUpload() {
 
 async function processFiles(files) {
   if (!files || !files.length) return;
+  if (!state.uploadEnabled) {
+    showError('服务器未配置挂载上传目录，无法上传文件');
+    return;
+  }
   for (const file of Array.from(files)) {
     if (file.type.startsWith('image/')) {
       if (state.images.length >= 3) { showError('图片最多上传 3 张'); break; }
-      if (file.size > 10 * 1024 * 1024) { showError(`图片 "${file.name}" 超过 10MB`); continue; }
-      state.images.push({ name: file.name, base64: await readAsBase64(file) });
+      if (file.size > MAX_IMAGE_SIZE) { showError(`图片 "${file.name}" 超过 10MB`); continue; }
+      try {
+        const processed = await prepareImage(file);
+        if (wouldExceedUploadBudget(processed.size)) {
+          showError('上传内容总大小过大，请减少图片数量或换更小的图片');
+          continue;
+        }
+        setGlobalLoading(true, '上传图片中...');
+        const uploaded = await uploadFile(processed.file, 'image');
+        state.images.push({
+          name: file.name,
+          size: processed.size,
+          originalSize: file.size,
+          previewUrl: processed.previewUrl,
+          url: uploaded.url
+        });
+      } catch {
+        showError(`图片 "${file.name}" 处理失败，请换一张后重试`);
+      } finally {
+        setGlobalLoading(false);
+      }
     } else if (file.type.startsWith('video/')) {
       if (state.videos.length >= 1) { showError('视频最多上传 1 个'); break; }
       const dur = await getVideoDuration(file);
       if (dur > 15) { showError(`视频超过 15 秒`); continue; }
-      if (file.size > 50 * 1024 * 1024) { showError(`视频超过 50MB`); continue; }
-      state.videos.push({ name: file.name, base64: await readAsBase64(file) });
+      if (file.size > MAX_VIDEO_SIZE) { showError(`视频超过 50MB`); continue; }
+      if (wouldExceedUploadBudget(file.size * 1.37)) {
+        showError('视频体积过大，移动网络或 iPhone 上传时容易失败，请缩短视频或改传图片');
+        continue;
+      }
+      try {
+        setGlobalLoading(true, '上传视频中...');
+        const uploaded = await uploadFile(file, 'video');
+        state.videos.push({
+          name: file.name,
+          size: file.size,
+          originalSize: file.size,
+          previewUrl: URL.createObjectURL(file),
+          url: uploaded.url
+        });
+      } catch {
+        showError(`视频 "${file.name}" 上传失败，请重试`);
+      } finally {
+        setGlobalLoading(false);
+      }
     } else { showError(`不支持的文件类型: ${file.name}`); }
   }
   renderPreview();
 }
 
-function readAsBase64(f) { return new Promise((r, j) => { const x = new FileReader(); x.onload = () => r(x.result); x.onerror = j; x.readAsDataURL(f); }); }
 function getVideoDuration(f) { return new Promise(r => { const v = document.createElement('video'); v.preload = 'metadata'; v.onloadedmetadata = () => { r(v.duration); URL.revokeObjectURL(v.src); }; v.onerror = () => r(Infinity); v.src = URL.createObjectURL(f); }); }
+
+function getCurrentUploadBytes() {
+  return [...state.images, ...state.videos].reduce((sum, item) => sum + (item.size || 0), 0);
+}
+
+function wouldExceedUploadBudget(nextSize) {
+  return getCurrentUploadBytes() + nextSize > MAX_TOTAL_UPLOAD_BYTES;
+}
+
+async function prepareImage(file) {
+  const needsCompression = file.size > 2 * 1024 * 1024 || /image\/(heic|heif)/i.test(file.type);
+  const optimizedFile = needsCompression ? await compressImage(file) : file;
+  const previewUrl = URL.createObjectURL(optimizedFile);
+  return {
+    name: file.name,
+    file: optimizedFile,
+    previewUrl,
+    size: optimizedFile.size,
+    originalSize: file.size
+  };
+}
+
+async function uploadFile(file, kind) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const uploadRes = await fetch(`/api/upload?kind=${encodeURIComponent(kind)}`, {
+    method: 'POST',
+    body: formData
+  });
+
+  const result = await uploadRes.json();
+  if (!uploadRes.ok || !result.success) {
+    throw new Error(result.error || '上传失败');
+  }
+
+  return result.data;
+}
+
+async function compressImage(file) {
+  const imageUrl = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(imageUrl);
+    const { width, height } = fitWithin(img.naturalWidth || img.width, img.naturalHeight || img.height, IMAGE_MAX_DIMENSION);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await canvasToBlob(canvas, 'image/jpeg', IMAGE_OUTPUT_QUALITY);
+    return new File([blob], replaceExtension(file.name, 'jpg'), { type: 'image/jpeg' });
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function fitWithin(width, height, maxDimension) {
+  if (width <= maxDimension && height <= maxDimension) return { width, height };
+  const scale = Math.min(maxDimension / width, maxDimension / height);
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale))
+  };
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (blob) resolve(blob);
+      else reject(new Error('blob conversion failed'));
+    }, type, quality);
+  });
+}
+
+function replaceExtension(fileName, ext) {
+  return fileName.replace(/\.[^.]+$/, '') + '.' + ext;
+}
 
 function renderPreview() {
   const grid = el('previewGrid'), total = state.images.length + state.videos.length;
   el('fileCount').textContent = `${total} 个文件`;
   if (!total) { grid.innerHTML = ''; return; }
   let h = '';
-  state.images.forEach((img, i) => { h += `<div class="preview-item"><img src="${img.base64}"><span class="preview-label">图片 ${i+1}</span><button class="remove-btn" onclick="removeFile('image',${i})">×</button></div>`; });
-  state.videos.forEach(vid => { h += `<div class="preview-item"><video src="${vid.base64}" controls muted></video><span class="preview-label">视频</span><button class="remove-btn" onclick="removeFile('video',0)">×</button></div>`; });
+  state.images.forEach((img, i) => {
+    const compressed = img.originalSize > img.size ? ` · 已压缩 ${(img.originalSize / 1024 / 1024).toFixed(1)}MB→${(img.size / 1024 / 1024).toFixed(1)}MB` : '';
+    h += `<div class="preview-item"><img src="${img.previewUrl}"><span class="preview-label">图片 ${i+1}${compressed}</span><button class="remove-btn" onclick="removeFile('image',${i})">×</button></div>`;
+  });
+  state.videos.forEach(vid => { h += `<div class="preview-item"><video src="${vid.previewUrl}" controls muted></video><span class="preview-label">视频</span><button class="remove-btn" onclick="removeFile('video',0)">×</button></div>`; });
   grid.innerHTML = h; grid.style.display = 'grid';
 }
 
-function removeFile(t, i) { t === 'image' ? state.images.splice(i, 1) : state.videos.splice(i, 1); renderPreview(); }
+function removeFile(t, i) {
+  const removed = t === 'image' ? state.images.splice(i, 1)[0] : state.videos.splice(i, 1)[0];
+  if (removed?.previewUrl?.startsWith('blob:')) {
+    URL.revokeObjectURL(removed.previewUrl);
+  }
+  renderPreview();
+}
 
 // ========== 分析 ==========
 
@@ -88,12 +237,16 @@ async function analyzeFood() {
   const useCustom = cB && cK && cN;
   if (!useCustom && !state.hasDefaultConfig) { showError('服务器未配置模型，请填写自定义模型配置'); return; }
 
-  const body = { images: state.images.map(i => i.base64), videos: state.videos.map(v => v.base64), weight: w };
+  const body = { images: state.images.map(i => i.url), videos: state.videos.map(v => v.url), weight: w };
   if (useCustom) { body.model = 'custom'; body.customConfig = { baseURL: cB, apiKey: cK, modelName: cN }; }
 
-  setLoading(true);
+  setLoading(true, '分析中...');
   try {
     const res = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.status === 413) {
+      showError('上传内容过大，请减少图片数量，或在 iPhone 上改传更清晰但更小的图片');
+      return;
+    }
     const result = await res.json();
     if (result.success) { state.lastResult = result.data; displayResult(result.data); }
     else showError(result.error || '分析失败');
@@ -101,11 +254,26 @@ async function analyzeFood() {
   finally { setLoading(false); }
 }
 
-function setLoading(on) {
+function setLoading(on, text = '分析中...') {
   const btn = el('analyzeBtn');
   btn.disabled = on;
   btn.querySelector('.btn-text').style.display = on ? 'none' : 'inline';
   btn.querySelector('.btn-loading').style.display = on ? 'inline-flex' : 'none';
+  btn.querySelector('.btn-loading').lastChild.textContent = text;
+}
+
+function setGlobalLoading(on, text) {
+  const analyzeBtn = el('analyzeBtn');
+  analyzeBtn.disabled = on;
+  if (on) {
+    analyzeBtn.querySelector('.btn-text').style.display = 'none';
+    analyzeBtn.querySelector('.btn-loading').style.display = 'inline-flex';
+    analyzeBtn.querySelector('.btn-loading').lastChild.textContent = text || '处理中...';
+  } else {
+    analyzeBtn.querySelector('.btn-text').style.display = 'inline';
+    analyzeBtn.querySelector('.btn-loading').style.display = 'none';
+    analyzeBtn.querySelector('.btn-loading').lastChild.textContent = '分析中...';
+  }
 }
 
 // ========== 结果展示 ==========
@@ -252,8 +420,8 @@ async function submitFollowup() {
 
   // 构建请求
   const body = {
-    images: state.images.map(i => i.base64),
-    videos: state.videos.map(v => v.base64),
+    images: state.images.map(i => i.url),
+    videos: state.videos.map(v => v.url),
     previousResult: state.lastResult,
     followupText: text
   };
@@ -273,6 +441,10 @@ async function submitFollowup() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
+    if (res.status === 413) {
+      showError('追问请求内容过大，请减少图片/视频后重新分析');
+      return;
+    }
     const result = await res.json();
     if (result.success) {
       state.lastResult = result.data;

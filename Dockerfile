@@ -1,5 +1,5 @@
 # 使用官方 Node.js 镜像
-FROM node:18-alpine
+FROM node:20-alpine
 
 # 设置工作目录
 WORKDIR /app
@@ -8,13 +8,16 @@ WORKDIR /app
 COPY package*.json ./
 
 # 安装依赖
-RUN npm install --production
+RUN npm install --omit=dev
 
 # 复制应用代码
 COPY . .
 
-# 暴露端口（ClawCloud 会通过环境变量 PORT 传入）
+# 暴露端口
 EXPOSE 10000
+
+ENV NODE_ENV=production
+ENV PORT=10000
 
 # 启动应用
 CMD ["npm", "start"]

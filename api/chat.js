@@ -1,5 +1,5 @@
 /**
- * Vercel Serverless Functions 共享 AI 调用模块
+ * AI 调用共享模块
  */
 
 const OpenAI = require('openai');
@@ -12,23 +12,32 @@ const DEFAULT_MODEL_CONFIG = {
   enabled: !!(process.env.AI_API_KEY)
 };
 
-// Serverless 下超时约 10s，用 Vercel streaming 需特殊处理
-const MAX_TIMEOUT_MS = 8 * 1000; // 留 2s 余地给响应处理
-
 async function createOpenAIClient(config) {
   return new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
 }
 
+function toRemoteUrl(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  return value.url || value.publicUrl || '';
+}
+
 /**
- * 构建 AI 消息内容（支持多图/视频 base64）
+ * 构建 AI 消息内容（支持对象存储 URL）
  */
 function buildUserContent(images, videos) {
   const content = [];
   if (images && images.length > 0) {
-    for (const b64 of images) content.push({ type: 'image_url', image_url: { url: b64 } });
+    for (const image of images) {
+      const url = toRemoteUrl(image);
+      if (url) content.push({ type: 'image_url', image_url: { url } });
+    }
   }
   if (videos && videos.length > 0) {
-    for (const b64 of videos) content.push({ type: 'image_url', image_url: { url: b64 } });
+    for (const video of videos) {
+      const url = toRemoteUrl(video);
+      if (url) content.push({ type: 'image_url', image_url: { url } });
+    }
   }
   return content;
 }
