@@ -5,7 +5,13 @@
 const OpenAI = require('openai');
 const fs = require('fs/promises');
 const path = require('path');
+const sharp = require('sharp');
 const { getUploadRoot, PUBLIC_PREFIX } = require('./disk');
+
+const IMAGE_TARGET_BYTES = Number(process.env.AI_IMAGE_TARGET_BYTES || 200 * 1024);
+const IMAGE_MAX_WIDTH = Number(process.env.AI_IMAGE_MAX_WIDTH || 1600);
+const IMAGE_MIN_QUALITY = Number(process.env.AI_IMAGE_MIN_QUALITY || 45);
+const IMAGE_START_QUALITY = Number(process.env.AI_IMAGE_START_QUALITY || 82);
 
 // 默认模型配置（可配置环境变量覆盖）
 const DEFAULT_MODEL_CONFIG = {
@@ -50,9 +56,52 @@ async function toModelMediaUrl(value, fallbackMime) {
     throw new Error('文件路径非法');
   }
 
-  const fileBuffer = await fs.readFile(normalizedFile);
   const mimeType = inferMimeType(normalizedFile, fallbackMime);
+
+  if (mimeType.startsWith('image/')) {
+    const fileBuffer = await fs.readFile(normalizedFile);
+    const optimized = await compressImageForModel(fileBuffer, mimeType);
+    return `data:${optimized.mimeType};base64,${optimized.buffer.toString('base64')}`;
+  }
+
+  const fileBuffer = await fs.readFile(normalizedFile);
   return `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+}
+
+async function compressImageForModel(inputBuffer, inputMimeType) {
+  let pipeline = sharp(inputBuffer, { failOn: 'none' }).rotate();
+  const metadata = await pipeline.metadata();
+
+  if ((metadata.width || 0) > IMAGE_MAX_WIDTH) {
+    pipeline = pipeline.resize({ width: IMAGE_MAX_WIDTH, withoutEnlargement: true });
+  }
+
+  let quality = IMAGE_START_QUALITY;
+  let output = await pipeline.clone().jpeg({ quality, mozjpeg: true }).toBuffer();
+
+  while (output.length > IMAGE_TARGET_BYTES && quality > IMAGE_MIN_QUALITY) {
+    quality -= 7;
+    output = await pipeline.clone().jpeg({ quality, mozjpeg: true }).toBuffer();
+  }
+
+  if (output.length > IMAGE_TARGET_BYTES) {
+    let width = metadata.width || IMAGE_MAX_WIDTH;
+    while (output.length > IMAGE_TARGET_BYTES && width > 640) {
+      width = Math.max(640, Math.round(width * 0.85));
+      output = await sharp(inputBuffer, { failOn: 'none' })
+        .rotate()
+        .resize({ width, withoutEnlargement: true })
+        .jpeg({ quality: IMAGE_MIN_QUALITY, mozjpeg: true })
+        .toBuffer();
+      if (width === 640) break;
+    }
+  }
+
+  if (output.length >= inputBuffer.length && inputMimeType === 'image/jpeg') {
+    return { buffer: inputBuffer, mimeType: 'image/jpeg' };
+  }
+
+  return { buffer: output, mimeType: 'image/jpeg' };
 }
 
 function inferMimeType(filePath, fallbackMime) {
