@@ -14,7 +14,7 @@ RUN npm install --production
 COPY . .
 
 # 暴露端口（ClawCloud 会通过环境变量 PORT 传入）
-EXPOSE 3000
+EXPOSE 10000
 
 # 启动应用
 CMD ["npm", "start"]
