@@ -319,8 +319,9 @@ function displayResult(data) {
     el('calibrateBadge').textContent = 'AI 估算'; el('calibrateBadge').className = 'calibrate-badge badge-estimated';
     el('calibrateDesc').textContent = `AI 估算总重约 ${data.totalWeight}g，输入实际重量可按比例校准所有食材`;
   } else {
+    const userWeight = data.userProvidedWeight || data.totalWeight;
     el('calibrateBadge').textContent = '用户输入'; el('calibrateBadge').className = 'calibrate-badge badge-user';
-    el('calibrateDesc').textContent = `当前基于用户输入的 ${data.userProvidedWeight}g，可修改后重新校准`;
+    el('calibrateDesc').textContent = `当前基于用户输入的 ${userWeight}g，可修改后重新校准`;
   }
   el('calibrateWeight').value = data.totalWeight;
 
@@ -431,8 +432,7 @@ function quickReplace(itemIndex, newName, btnElem) {
   }
   const oldName = data.foodItems[itemIndex].name;
   const text = `请把"${oldName}"替换成"${newName}"，结合图片重新确认所有食材的比例和热量`;
-  el('followupInput').value = text;
-  submitFollowup();
+  fillFollowup(text);
 }
 
 async function submitFollowup() {
